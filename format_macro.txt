@@ -1,0 +1,33 @@
+* create format table out of string variables for big data set (100M+ rows) using data step;
+
+%macro create_formats(table,catalog);
+ 
+  data here.&table._format;
+    set there.rdb_&table.;
+    fmtname = "&table.";
+    type = "N";
+    start = &table._id;
+    label = &table.;
+    output;
+  run;
+
+  proc format lib=&catalog. cntlin=here.&table._format; run;
+
+%mend create_formats;
+
+options FMTSEARCH=(here);
+
+%create_formats(venue,here);
+
+data venue;
+  v = 1;
+  output;
+  v = 2;
+  output;
+  v = 3;
+  output;
+run;
+
+proc print data=venue;
+  format v venue.;
+run;

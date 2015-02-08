@@ -1,0 +1,614 @@
+
+***********************************************************************;
+* batch process many impression text files into one big impression file;
+***********************************************************************;
+%macro nobs(dsn);
+
+  %local nobs dsid rc;
+
+  %let nobs = 0;
+
+  %let dsid = %sysfunc(open(&dsn,i));
+
+      %if &dsid %then %do;
+
+            %let nobs = %sysfunc(attrn(&dsid,nobs));
+
+            %let rc = %sysfunc(close(&dsid));
+
+      %end;
+
+&nobs
+
+%mend nobs;
+
+ 
+
+%macro lookup_insert(table,dsn);
+
+ 
+
+  %global rows_effected;
+
+ 
+
+  %let rows_effected = 0;
+
+  %let nvars = 0;
+
+      %let dsid = %sysfunc(open(&dsn,i));
+
+      %if &dsid %then %do;
+
+            %let nvars = %sysfunc(attrn(&dsid,nvars));
+
+            %let var = %sysfunc(varname(&dsid,1));
+
+            %let rc = %sysfunc(close(&dsid));
+
+      %end;
+
+     
+
+  %if &nvars ne 1 %then %abort;
+
+ 
+
+  %*assumes file extension;
+
+      %if %sysfunc(fileexist(&rdb_path.&dbname._&table..sas7bdat)) %then %do;
+
+    data lookup_temp;
+
+      set &dsn;
+
+      if _N_ = 1 then do;
+
+        declare hash table (dataset: "&dblib..&dbname._&table.",hashexp:5);
+
+        table.defineKey("&var.");
+
+        table.defineDone();
+
+      end;
+
+      if table.find() then output;
+
+    run;
+
+   
+
+    %let rows_effected = %nobs(lookup_temp);
+
+    %let last_id = %nobs(&dblib..&dbname._&table.);
+
+   
+
+    data lookup_temp;
+
+      set lookup_temp;
+
+      &table._id = &last_id. + _N_;
+
+    run;
+
+   
+
+    proc append base=&dblib..&dbname._&table. data=lookup_temp;
+
+    run;
+
+  %end;
+
+  %else %do;
+
+    data &dblib..&dbname._&table.;
+
+      set &dsn.;
+
+      &table._id = _N_;
+
+    run;
+
+    %let rows_effected = %nobs(&dblib..&dbname._&table.);
+
+  %end;
+
+ 
+
+%mend lookup_insert;
+
+ 
+
+%macro unique_vals(dsn=,varlist=);
+
+ 
+
+      %let dsid = %sysfunc(open(&dsn.,i));
+
+      %if &dsid. %then %do;
+
+        %if &varlist. = %then %do;
+
+            %let nvars = %sysfunc(attrn(&dsid.,nvars.));
+
+            %do i=1 %to &nvars.;
+
+                  %let varlist=&varlist %sysfunc(varname(&dsid.,&i.));
+
+            %end;
+
+      %end;
+
+            %let rc = %sysfunc(close(&dsid.));
+
+            %let varlist=%sysfunc(compbl(&varlist.));
+
+            %let varlist=%sysfunc(strip(&varlist.));
+
+ 
+
+    data _null_;
+
+      set &dsn. end=done;
+
+ 
+
+      if _N_ = 1 then do;
+
+        %let i = 1;
+
+        %let word = %scan(&varlist, &i);
+
+        %do %while (&word ne);
+
+          declare hash hh&i (hashexp:5);
+
+          hh&i..defineKey("&word");
+
+          hh&i..defineDone();
+
+          %let i = %eval(&i + 1);
+
+          %let word = %scan(&varlist, &i);
+
+        %end;
+
+      end;
+
+ 
+
+      %let i = 1;
+
+      %let word = %scan(&varlist, &i);
+
+      %do %while (&word ne);
+
+        hh&i..replace();
+
+        %let i = %eval(&i + 1);
+
+        %let word = %scan(&varlist, &i);
+
+      %end;
+
+     
+
+      if done then do;
+
+        %let i = 1;
+
+        %let word = %scan(&varlist, &i);
+
+        %do %while (&word ne);
+
+          rc = hh&i..output(dataset: "&dsn._var&i");
+
+          %let i = %eval(&i + 1);
+
+          %let word = %scan(&varlist, &i);
+
+        %end;
+
+      end;
+
+     
+
+    run;
+
+  %end;
+
+ 
+
+%mend unique_vals;
+
+ 
+
+*file name assumed to be: <prefix>_<id>_<yyyymmdd>.<filetype>;
+
+*filestring is assumed to be the prefix, and identifies a specific file structure;
+
+%macro online_files(filestring);
+
+ 
+
+  %global rows_effected;
+
+  %let files_processed = 0;
+
+ 
+
+      %let rc=%sysfunc(filename(filrf,&path));
+
+      %let did=%sysfunc(dopen(&filrf));
+
+      %let numfiles=%sysfunc(dnum(&did));
+
+      %do filenum=1 %to &numfiles;
+
+ 
+
+            %let fname=%sysfunc(dread(&did,&filenum));
+
+            %if %qsubstr(%bquote(&fname),1,%length(&filestring)) = &filestring %then %do;
+
+ 
+
+                  %if %qsubstr(%bquote(&fname),%length(&fname) - 2) = .gz %then %do;
+
+     
+
+                        filename fn pipe "gunzip -c &path.&fname";
+
+                        %let fn = fn;
+
+                        %let fname = %qsubstr(%bquote(&fname),1,%length(&fname) - 3);
+
+ 
+
+                  %end;
+
+                  %else %do;
+
+ 
+
+                        %let fn = "&path.&fname";
+
+ 
+
+                  %end;
+
+ 
+
+      %*!!!variable length can be changed;
+
+      data fname;
+
+        length name $29;
+
+        name = "&fname.";
+
+        output;
+
+      run;
+
+ 
+
+      %if %sysfunc(fileexist(&rdb_path.&dbname._file.sas7bdat)) %then %do;
+
+        data lookup_temp;
+
+          set fname;
+
+          if _N_ = 1 then do;
+
+            declare hash table (dataset: "&dblib..&dbname._file",hashexp:5);
+
+            table.defineKey("name");
+
+            table.defineDone();
+
+          end;
+
+          if table.find() then output;
+
+        run;
+
+       
+
+        %let rows_effected = %nobs(lookup_temp);
+
+      %end;
+
+      %else %let rows_effected = 1;
+
+     
+
+      %let file_processed = 0;
+
+      %*if the file has not already been processed...;
+
+      %if &rows_effected ne 0 %then %do;
+
+ 
+
+        %*filetype specific code, output is a dataset named temp;
+
+        %*configuration variables for specific files: master_table, vars;
+
+        %if %qsubstr(%bquote(&fname),1,%length(btrk.impress)) = btrk.impress %then %do;
+
+ 
+
+          %let master_table = impression;
+
+          %let vars = placement campaign descript url engine venue ad_type;
+
+         
+
+                  %let datestamp = %qsubstr(%scan(%qsubstr(%bquote(&fname),%length(&filestring)),3,%str(_)),1,8);
+
+                  %put datestamp = &datestamp;
+
+         
+
+          %let start_id = %nobs(&dblib..&dbname._&master_table.);
+
+          %let file_id = %nobs(&dblib..&dbname._file);
+
+ 
+
+          data temp;
+
+            infile &fn. lrecl=32767 dlm='|' dsd firstobs=1;
+
+            informat dt_string $23. placement $100.
+
+                   campaign $100. descript $100.
+
+                   url $150. engine $50.
+
+                   venue $50. ad_type $25.
+
+                   cookie $36.;
+
+            format dt_string $23. placement $100.
+
+                 campaign $100. descript $100.
+
+                 url $150. engine $50.
+
+                 venue $50. ad_type $25.
+
+                 cookie $36.;
+
+            input dt_string $ placement $
+
+                campaign $ descript $
+
+                url $ engine $
+
+                venue $ ad_type $
+
+                cookie $;
+
+           
+
+            if _N_ = 1 and dt_string = "BTRK" then delete;
+
+             
+
+            date = input(substr(dt_string,1,10),yymmdd10.);
+
+            time = input(substr(dt_string,11),time12.);
+
+            dt = dhms(date,hour(time),minute(time),second(time));
+
+           
+
+            drop dt_string date time;
+
+         
+
+            &master_table._id = &start_id. + _N_;
+
+            file_id = &file_id.;
+
+         
+
+          run;
+
+         
+
+          %let file_processed = 1;         
+
+       
+
+        %end;
+
+       
+
+ 
+
+        %if &file_processed %then %do;
+
+       
+
+          %*result of this is assumed to line up with vars, for now;
+
+          %unique_vals(dsn=temp,varlist=&vars.);
+
+         
+
+          %*update lookup tables;
+
+          %let i = 1;
+
+          %let word = %scan(&vars, &i);
+
+          %do %while (&word ne);
+
+            %lookup_insert(table=&word,dsn=temp_var&i.);
+
+            %let i = %eval(&i + 1);
+
+            %let word = %scan(&vars, &i);
+
+          %end;
+
+         
+
+          %*replace values with id;
+
+          data temp;
+
+            set temp;
+
+            drop &vars;
+
+ 
+
+            if _N_ = 1 then do;
+
+              %let i = 1;
+
+              %let word = %scan(&vars, &i);
+
+              %do %while (&word ne);
+
+                length &word._id 6;
+
+               
+
+                declare hash &word._hash(dataset: "&dblib..&dbname._&word.", hashexp: 5);
+
+                &word._hash.defineKey("&word.");
+
+                &word._hash.defineData("&word._id");
+
+                &word._hash.defineDone();
+
+                %let i = %eval(&i + 1);
+
+                %let word = %scan(&vars, &i);
+
+              %end;
+
+            end;
+
+           
+
+            %let i = 1;
+
+            %let word = %scan(&vars, &i);
+
+            %do %while (&word ne);
+
+              if &word._hash.find() then put 'ERROR: lookup failed';
+
+              %let i = %eval(&i + 1);
+
+              %let word = %scan(&vars, &i);
+
+            %end;
+
+          run;
+
+ 
+
+          %*append is allowed to be used here because the filename check prevents observations from being processed twice;
+
+          proc append base=&dblib..&dbname._&master_table. data=temp;
+
+          run;
+
+         
+
+          %*add the file name to the list of files that have been processed;
+
+          %lookup_insert(table=file,dsn=fname);
+
+         
+
+          %*short-circuit the file processing after a certain number of files;
+
+          %let files_processed = %eval(&files_processed + 1);
+
+          %if &files_processed. >= &max_files. %then %abort;
+
+ 
+
+        %end;
+
+ 
+
+      %end;
+
+ 
+
+            %end;
+
+ 
+
+      %end;
+
+ 
+
+%mend online_files;
+
+ 
+
+*config;
+
+%let max_files = 50;
+
+%let path = /direct2/sapient/inbound_data/;
+
+%let rdb_path = /direct2/sapient/inbound_data/rdb/;
+
+libname lib "&rdb_path.";
+
+%let dbname = rdb;
+
+%let dblib = lib;
+
+ 
+
+%online_files(btrk.impress);
+
+*btrk.impress;
+
+ 
+
+*some impression files have a first-row header;
+
+*example: BTRK|IMPS|90|20090511|44|20020326|btrk.impress_90_20090511.txt|2009-05-11 01:42:00.000|2009-05-10 00:00:00.000|2009-05-10 23:59:59.000|14811829|3882836658;
+
+*cleansing rules to potential use for removing header row observations:;
+
+*if missing(dt) then delete;
+
+*if campaign ne "Travelers_*";
+
+*if descript = yyyymmdd of datestamp;
+
+*if engine = numeric;
+
+*if placement = "IMPS";
+
+*if url = numeric;
+
+*if venue = filename;
+
+*btrk.impress_70_20090421.txt;
+
+ 
+
+*btrk.clck;
+
+*btrk.psimpr;
+
+*btrk.quote;
+
+*btrk.view_thru;
+

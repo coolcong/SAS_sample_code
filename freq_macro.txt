@@ -1,0 +1,64 @@
+*******************************************************************************************
+*This macro is written by Cong Feng during the internship at Travelers Insurance in 2010 
+*summer. It performs the same function as proc freq.But it is highly efficient when dealing 
+*with over hundreds of millions observations. I utilized the hashing object programming 
+*technique in this macro. For proc freq, how many variables in the list, how many runs you 
+*have to go through the data. Using the macro, you only need to go through data for one run 
+*and you can get the frequency table for all the variables. It can increase the efficiency 
+*by more than 50% especially when you have "big" dataset.
+*******************************************************************************************
+
+%macro freq(dsn=,varlist=);
+
+ %let dsid = %sysfunc(open(&dsn.,i));
+ %if &dsid. %then %do;
+   %if &varlist. = %then %do;
+    %let nvars = %sysfunc(attrn(&dsid.,nvars.));
+    %do i=1 %to &nvars.;
+     %let varlist=&varlist %sysfunc(varname(&dsid.,&i.));
+    %end;
+   %end;
+  %let rc = %sysfunc(close(&dsid.));
+  %let varlist=%sysfunc(compbl(&varlist.));
+  %let varlist=%sysfunc(strip(&varlist.));
+
+    data _null_;
+      set &dsn. end=done;
+ 
+      if _N_ = 1 then do;
+        %let i = 1;
+        %let word = %scan(&varlist, &i);
+        %do %while (&word ne);
+          declare hash hh&i (hashexp:5);
+          hh&i..defineKey("&word");
+          hh&i..defineData("&word","frequency");
+          hh&i..defineDone();
+          %let i = %eval(&i + 1);
+          %let word = %scan(&varlist, &i);
+        %end;
+      end;
+ 
+      %let i = 1;
+      %let word = %scan(&varlist, &i);
+      %do %while (&word ne);
+        if hh&i..find() then frequency = 0;
+        frequency+1;
+        hh&i..replace();
+        %let i = %eval(&i + 1);
+        %let word = %scan(&varlist, &i);
+      %end;
+     
+      if done then do;
+        %let i = 1;
+        %let word = %scan(&varlist, &i);
+        %do %while (&word ne);
+          rc = hh&i..output(dataset: "&dsn._var&i");
+          %let i = %eval(&i + 1);
+          %let word = %scan(&varlist, &i);
+        %end;
+      end;
+     
+    run;
+  %end;
+
+%mend freq;
